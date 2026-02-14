@@ -18,9 +18,6 @@ function App() {
   const [showScanner, setShowScanner] = useState(false);
   const [products, setProducts] = useState([]);
 
-  // Temporary local storage simulation
-  const [allProducts, setAllProducts] = useState([]);
-
   // 🔗 Connect Wallet
  const connectWallet = async () => {
   try {
