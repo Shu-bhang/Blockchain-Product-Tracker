@@ -3,10 +3,15 @@ import { Html5QrcodeScanner } from "html5-qrcode";
 import "./App.css";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESS, ABI } from "./contract";
+import { QRCodeCanvas } from "qrcode.react";
 
 
 function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(
+  localStorage.getItem("auth") === "true"
+  );
   const [account, setAccount] = useState("");
+  const [generatedQR, setGeneratedQR] = useState("");
 
   // Add Product States
   const [newHash, setNewHash] = useState("");
@@ -17,6 +22,22 @@ function App() {
   const [hashInput, setHashInput] = useState("");
   const [showScanner, setShowScanner] = useState(false);
   const [products, setProducts] = useState([]);
+const handleLogin = (email, password) => {
+  if (email === "admin@test.com" && password === "1234") {
+    localStorage.setItem("auth", "true");
+    localStorage.setItem("userId", email);
+    setIsLoggedIn(true);
+  } else {
+    alert("Invalid login");
+  }
+};
+const logout = () => {
+  localStorage.removeItem("auth");
+  setIsLoggedIn(false);
+};
+
+
+  
 
   // 🔗 Connect Wallet
  const connectWallet = async () => {
@@ -57,14 +78,29 @@ function App() {
     );
 
     const tx = await contract.addProduct(
-      newHash,       // productId
-      newName,       // batchHash (you were using name field)
-      newAddress     // location
+      newHash,
+      newName,
+      newAddress
     );
 
     await tx.wait();
+    setGeneratedQR(newHash);
 
-    alert("Product added to blockchain!");
+    // 🔹 SAVE PRODUCT TO DATABASE
+    await fetch("http://localhost:5000/products/add", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        userId: localStorage.getItem("userId"),
+        productHash: newHash,
+        name: newName,
+        location: newAddress
+      })
+    });
+
+    alert("Product added to blockchain and database!");
 
     setNewHash("");
     setNewName("");
@@ -128,7 +164,34 @@ function App() {
     }
   }, [showScanner]);
   
+  if (!isLoggedIn) {
+  return (
+    <div className="login-page">
+      <div className="login-card">
 
+        <h2>Blockchain Product Tracker</h2>
+        <p>Secure Supply Chain Verification</p>
+
+        <input id="email" type="email" placeholder="Email" />
+
+        <input id="password" type="password" placeholder="Password" />
+
+        <button
+          className="primary-btn"
+          onClick={() =>
+            handleLogin(
+              document.getElementById("email").value,
+              document.getElementById("password").value
+            )
+          }
+        >
+          Login
+        </button>
+
+      </div>
+    </div>
+  );
+}
   return (
   <div className="app">
     <div className="container">
@@ -141,15 +204,23 @@ function App() {
         </div>
 
         {!account ? (
-          <button className="primary-btn large" onClick={connectWallet}>
-            Connect Wallet
-          </button>
-        ) : (
-          <div className="wallet-box">
-            Connected:
-            <span> {account.slice(0, 10)}...</span>
-          </div>
-        )}
+  <button className="primary-btn large" onClick={connectWallet}>
+    Connect Wallet
+  </button>
+) : (
+  <div className="wallet-box">
+    Connected:
+    <span> {account.slice(0, 10)}...</span>
+
+    <button
+      className="secondary-btn"
+      onClick={logout}
+      style={{ marginLeft: "15px" }}
+    >
+      Logout
+    </button>
+  </div>
+)}
       </div>
 
       {/* ================= GRID SECTION ================= */}
@@ -201,7 +272,16 @@ function App() {
             Add to Blockchain
           </button>
         </div>
+        {/* 📱 GENERATED QR */}
+        {generatedQR && (
+          <div className="card">
+            <h2>📱 Product QR Code</h2>
 
+            <QRCodeCanvas value={generatedQR} size={200} />
+
+            <p style={{ marginTop: "10px" }}>{generatedQR}</p>
+          </div>
+        )}
         {/* -------- TRACK PRODUCT -------- */}
         <div className="card">
           <h2>🔎 Track Product</h2>
