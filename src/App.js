@@ -74,6 +74,11 @@ function App() {
   };
 
   // ── Add Product ────────────────────────────────────────
+  const handleAddFieldChange = (setter) => (e) => {
+    setter(e.target.value);
+    setAddStatus(null);
+  };
+
   const addProduct = async () => {
     if (!newHash || !newName || !newAddress) return;
     if (!window.ethereum) {
@@ -104,7 +109,9 @@ function App() {
           name: newName,
           location: newAddress,
         }),
-      }).catch(() => {});
+      }).catch((dbError) => {
+        console.warn("Database sync failed (blockchain transaction succeeded):", dbError);
+      });
 
       setAddStatus("success");
       setNewHash("");
@@ -263,19 +270,19 @@ function App() {
               type="text"
               placeholder="Product Hash"
               value={newHash}
-              onChange={(e) => { setNewHash(e.target.value); setAddStatus(null); }}
+              onChange={handleAddFieldChange(setNewHash)}
             />
             <input
               type="text"
               placeholder="Product Name"
               value={newName}
-              onChange={(e) => { setNewName(e.target.value); setAddStatus(null); }}
+              onChange={handleAddFieldChange(setNewName)}
             />
             <input
               type="text"
               placeholder="Product Location / Address"
               value={newAddress}
-              onChange={(e) => { setNewAddress(e.target.value); setAddStatus(null); }}
+              onChange={handleAddFieldChange(setNewAddress)}
             />
 
             <button
