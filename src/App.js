@@ -8,143 +8,154 @@ import { QRCodeCanvas } from "qrcode.react";
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(
-  localStorage.getItem("auth") === "true"
+    localStorage.getItem("auth") === "true"
   );
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+
   const [account, setAccount] = useState("");
+  const [walletLoading, setWalletLoading] = useState(false);
   const [generatedQR, setGeneratedQR] = useState("");
 
   // Add Product States
   const [newHash, setNewHash] = useState("");
   const [newName, setNewName] = useState("");
   const [newAddress, setNewAddress] = useState("");
+  const [addStatus, setAddStatus] = useState(null); // null | "pending" | "success" | "error"
+  const [addError, setAddError] = useState("");
 
   // Track Product States
   const [hashInput, setHashInput] = useState("");
   const [showScanner, setShowScanner] = useState(false);
   const [products, setProducts] = useState([]);
-const handleLogin = (email, password) => {
-  if (email === "admin@test.com" && password === "1234") {
-    localStorage.setItem("auth", "true");
-    localStorage.setItem("userId", email);
-    setIsLoggedIn(true);
-  } else {
-    alert("Invalid login");
-  }
-};
-const logout = () => {
-  localStorage.removeItem("auth");
-  setIsLoggedIn(false);
-};
+  const [trackLoading, setTrackLoading] = useState(false);
+  const [trackError, setTrackError] = useState("");
 
+  // ── Login ──────────────────────────────────────────────
+  const handleLogin = (e) => {
+    e.preventDefault();
+    setLoginError("");
+    if (loginEmail === "admin@test.com" && loginPassword === "1234") {
+      localStorage.setItem("auth", "true");
+      localStorage.setItem("userId", loginEmail);
+      setIsLoggedIn(true);
+    } else {
+      setLoginError("Invalid email or password. Please try again.");
+    }
+  };
 
-  
+  const logout = () => {
+    localStorage.removeItem("auth");
+    localStorage.removeItem("userId");
+    setIsLoggedIn(false);
+    setAccount("");
+    setProducts([]);
+    setGeneratedQR("");
+  };
 
-  // 🔗 Connect Wallet
- const connectWallet = async () => {
-  try {
+  // ── Connect Wallet ─────────────────────────────────────
+  const connectWallet = async () => {
     if (typeof window.ethereum === "undefined") {
-      alert("MetaMask not detected");
+      alert("MetaMask is not installed. Please install it to continue.");
+      return;
+    }
+    try {
+      setWalletLoading(true);
+      const accounts = await window.ethereum.request({
+        method: "eth_requestAccounts",
+      });
+      setAccount(accounts[0]);
+    } catch (error) {
+      console.error("Wallet connection error:", error);
+    } finally {
+      setWalletLoading(false);
+    }
+  };
+
+  // ── Add Product ────────────────────────────────────────
+  const handleAddFieldChange = (setter) => (e) => {
+    setter(e.target.value);
+    setAddStatus(null);
+  };
+
+  const addProduct = async () => {
+    if (!newHash || !newName || !newAddress) return;
+    if (!window.ethereum) {
+      setAddStatus("error");
+      setAddError("MetaMask is required to add products.");
       return;
     }
 
-    const accounts = await window.ethereum.request({
-      method: "eth_requestAccounts",
-    });
+    setAddStatus("pending");
+    setAddError("");
 
-    setAccount(accounts[0]);
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
-  } catch (error) {
-    console.error("Wallet connection error:", error);
-    alert("Connection failed");
-  }
-};
-  // ➕ Add Product (Simulating Blockchain Add)
-  const addProduct = async () => {
-  if (!newHash || !newName || !newAddress) return;
+      const tx = await contract.addProduct(newHash, newName, newAddress);
+      await tx.wait();
 
-  if (!window.ethereum) {
-    alert("Install MetaMask");
-    return;
-  }
+      setGeneratedQR(newHash);
 
-  try {
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    const signer = await provider.getSigner();
+      await fetch("http://localhost:5000/products/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: localStorage.getItem("userId"),
+          productHash: newHash,
+          name: newName,
+          location: newAddress,
+        }),
+      }).catch((dbError) => {
+        console.warn("Database sync failed (blockchain transaction succeeded):", dbError);
+      });
 
-    const contract = new ethers.Contract(
-      CONTRACT_ADDRESS,
-      ABI,
-      signer
-    );
+      setAddStatus("success");
+      setNewHash("");
+      setNewName("");
+      setNewAddress("");
+    } catch (error) {
+      console.error(error);
+      setAddStatus("error");
+      setAddError(error?.reason || error?.message || "Transaction failed. Please try again.");
+    }
+  };
 
-    const tx = await contract.addProduct(
-      newHash,
-      newName,
-      newAddress
-    );
-
-    await tx.wait();
-    setGeneratedQR(newHash);
-
-    // 🔹 SAVE PRODUCT TO DATABASE
-    await fetch("http://localhost:5000/products/add", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        userId: localStorage.getItem("userId"),
-        productHash: newHash,
-        name: newName,
-        location: newAddress
-      })
-    });
-
-    alert("Product added to blockchain and database!");
-
-    setNewHash("");
-    setNewName("");
-    setNewAddress("");
-
-  } catch (error) {
-    console.error(error);
-    alert("Transaction failed");
-  }
-};
-
-
-  // 🔎 Track Product History
+  // ── Track Product History ──────────────────────────────
   const fetchHistory = async () => {
-  if (!hashInput) return;
+    if (!hashInput) return;
+    setTrackLoading(true);
+    setTrackError("");
+    setProducts([]);
 
-  try {
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    const contract = new ethers.Contract(
-      CONTRACT_ADDRESS,
-      ABI,
-      provider
-    );
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+      const history = await contract.getProductHistory(hashInput);
 
-    const history = await contract.getProductHistory(hashInput);
+      const formatted = history.map((item) => ({
+        hash: item.productId,
+        name: item.batchHash,
+        address: item.location,
+        time: new Date(Number(item.timestamp) * 1000).toLocaleString(),
+      }));
 
-    const formatted = history.map((item) => ({
-      hash: item.productId,
-      name: item.batchHash,
-      address: item.location,
-      time: new Date(Number(item.timestamp) * 1000).toLocaleString(),
-    }));
+      setProducts(formatted);
+      if (formatted.length === 0) {
+        setTrackError("No history found for this product hash.");
+      }
+    } catch (error) {
+      console.error("Fetch error:", error);
+      setTrackError("Failed to fetch product history. Check the hash and try again.");
+    } finally {
+      setTrackLoading(false);
+    }
+  };
 
-    setProducts(formatted);
-
-  } catch (error) {
-    console.error("Fetch error:", error);
-    alert("Error fetching history");
-  }
-};
-
-
-
-  // 📷 QR Scanner
+  // ── QR Scanner ─────────────────────────────────────────
   useEffect(() => {
     if (showScanner) {
       const scanner = new Html5QrcodeScanner(
@@ -159,192 +170,228 @@ const logout = () => {
           setShowScanner(false);
           scanner.clear();
         },
-        (error) => {}
+        () => {}
       );
     }
   }, [showScanner]);
-  
+
+  // ── Login Screen ───────────────────────────────────────
   if (!isLoggedIn) {
-  return (
-    <div className="login-page">
-      <div className="login-card">
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <span className="brand-icon">🔗</span>
+          <h2>Blockchain Product Tracker</h2>
+          <p>Secure Supply Chain Verification</p>
 
-        <h2>Blockchain Product Tracker</h2>
-        <p>Secure Supply Chain Verification</p>
-
-        <input id="email" type="email" placeholder="Email" />
-
-        <input id="password" type="password" placeholder="Password" />
-
-        <button
-          className="primary-btn"
-          onClick={() =>
-            handleLogin(
-              document.getElementById("email").value,
-              document.getElementById("password").value
-            )
-          }
-        >
-          Login
-        </button>
-
+          <form onSubmit={handleLogin}>
+            <input
+              type="email"
+              placeholder="Email address"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              required
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              required
+            />
+            {loginError && <p className="login-error">⚠ {loginError}</p>}
+            <button type="submit" className="primary-btn">
+              Sign In
+            </button>
+          </form>
+        </div>
       </div>
-    </div>
-  );
-}
-  return (
-  <div className="app">
-    <div className="container">
+    );
+  }
 
-      {/* ================= HERO ================= */}
+  // ── Main App ───────────────────────────────────────────
+  return (
+    <div className="app">
+      {/* NAV / HERO */}
       <div className="hero">
         <div>
-          <h1>Blockchain Product Tracker</h1>
+          <h1>🔗 Blockchain Product Tracker</h1>
           <p>Secure Supply Chain Verification using Ethereum</p>
         </div>
 
-        {!account ? (
-  <button className="primary-btn large" onClick={connectWallet}>
-    Connect Wallet
-  </button>
-) : (
-  <div className="wallet-box">
-    Connected:
-    <span> {account.slice(0, 10)}...</span>
-
-    <button
-      className="secondary-btn"
-      onClick={logout}
-      style={{ marginLeft: "15px" }}
-    >
-      Logout
-    </button>
-  </div>
-)}
-      </div>
-
-      {/* ================= GRID SECTION ================= */}
-      <div className="grid">
-
-        {/* -------- ADD PRODUCT -------- */}
-        <div className="stats">
-        <div>
-        <h3>Smart Contract</h3>
-        <p>Active</p>
-        </div>
-        <div>
-        <h3>Network</h3>
-        <p>Sepolia</p>
-        </div>
-        <div>
-        <h3>Status</h3>
-        <p>
-        <span className="dot"></span> Connected
-        </p>
-        </div>
-        </div>
-
-        <div className="card">
-          <h2>📦 Add Product</h2>
-
-          <input
-            type="text"
-            placeholder="Product Hash"
-            value={newHash}
-            onChange={(e) => setNewHash(e.target.value)}
-          />
-
-          <input
-            type="text"
-            placeholder="Product Name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
-
-          <input
-            type="text"
-            placeholder="Product Address"
-            value={newAddress}
-            onChange={(e) => setNewAddress(e.target.value)}
-          />
-
-          <button className="primary-btn" onClick={addProduct}>
-            Add to Blockchain
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          {!account ? (
+            <button
+              className="primary-btn large"
+              onClick={connectWallet}
+              disabled={walletLoading}
+            >
+              {walletLoading ? (
+                <><span className="spinner" /> Connecting…</>
+              ) : (
+                "🦊 Connect Wallet"
+              )}
+            </button>
+          ) : (
+            <div className="wallet-box">
+              🟢<span>{account.slice(0, 6)}…{account.slice(-4)}</span>
+            </div>
+          )}
+          <button className="secondary-btn" onClick={logout}>
+            Logout
           </button>
         </div>
-        {/* 📱 GENERATED QR */}
-        {generatedQR && (
-          <div className="card">
-            <h2>📱 Product QR Code</h2>
+      </div>
 
-            <QRCodeCanvas value={generatedQR} size={200} />
+      <div className="container">
+        <div className="grid">
 
-            <p style={{ marginTop: "10px" }}>{generatedQR}</p>
+          {/* STATS BAR */}
+          <div className="stats">
+            <div>
+              <h3>Smart Contract</h3>
+              <p>Active</p>
+            </div>
+            <div>
+              <h3>Network</h3>
+              <p>Sepolia</p>
+            </div>
+            <div>
+              <h3>Status</h3>
+              <p><span className="dot" /> Connected</p>
+            </div>
           </div>
-        )}
-        {/* -------- TRACK PRODUCT -------- */}
-        <div className="card">
-          <h2>🔎 Track Product</h2>
 
-          <div className="input-section">
+          {/* ADD PRODUCT */}
+          <div className="card">
+            <h2>📦 Add Product</h2>
+
             <input
               type="text"
-              placeholder="Enter Product Hash"
-              value={hashInput}
-              onChange={(e) => setHashInput(e.target.value)}
+              placeholder="Product Hash"
+              value={newHash}
+              onChange={handleAddFieldChange(setNewHash)}
+            />
+            <input
+              type="text"
+              placeholder="Product Name"
+              value={newName}
+              onChange={handleAddFieldChange(setNewName)}
+            />
+            <input
+              type="text"
+              placeholder="Product Location / Address"
+              value={newAddress}
+              onChange={handleAddFieldChange(setNewAddress)}
             />
 
-            <button className="primary-btn" onClick={fetchHistory}>
-              Get History
+            <button
+              className="primary-btn"
+              onClick={addProduct}
+              disabled={addStatus === "pending" || !newHash || !newName || !newAddress}
+            >
+              {addStatus === "pending" ? (
+                <><span className="spinner" /> Submitting Transaction…</>
+              ) : (
+                "Add to Blockchain"
+              )}
             </button>
 
-            <button
-              className="secondary-btn"
-              onClick={() => setShowScanner(!showScanner)}
-            >
-              Scan QR
-            </button>
+            {addStatus === "success" && (
+              <div className="alert alert-success">✅ Product added to blockchain successfully!</div>
+            )}
+            {addStatus === "error" && (
+              <div className="alert alert-error">❌ {addError}</div>
+            )}
+            {addStatus === "pending" && (
+              <div className="alert alert-pending">⏳ Transaction pending — awaiting blockchain confirmation…</div>
+            )}
           </div>
 
-          {showScanner && (
-            <div id="reader" style={{ marginTop: "20px" }}></div>
+          {/* GENERATED QR */}
+          {generatedQR && (
+            <div className="card">
+              <h2>📱 Product QR Code</h2>
+              <div className="qr-wrapper">
+                <QRCodeCanvas value={generatedQR} size={200} />
+                <div className="qr-hash">{generatedQR}</div>
+              </div>
+            </div>
           )}
 
-          {products.length > 0 && (
-            <table>
-              {products.length === 0 && (
-                <div className="empty-state">
-                No product history loaded yet.
-                </div>
-                )}
-              <thead>
-                <tr>
-                  <th>Hash</th>
-                  <th>Product Name</th>
-                  <th>Product Address</th>
-                  <th>Timestamp</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((item, index) => (
-                  <tr key={index}>
-                    <td>{item.hash}</td>
-                    <td>{item.name}</td>
-                    <td>{item.address}</td>
-                    <td>{item.time}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {/* TRACK PRODUCT */}
+          <div className="card" style={{ gridColumn: generatedQR ? "span 1" : "span 1" }}>
+            <h2>🔎 Track Product</h2>
+
+            <div className="input-section">
+              <input
+                type="text"
+                placeholder="Enter Product Hash"
+                value={hashInput}
+                onChange={(e) => { setHashInput(e.target.value); setTrackError(""); }}
+              />
+              <button
+                className="primary-btn"
+                onClick={fetchHistory}
+                disabled={trackLoading || !hashInput}
+              >
+                {trackLoading ? <><span className="spinner" /> Fetching…</> : "Get History"}
+              </button>
+              <button
+                className="secondary-btn"
+                onClick={() => setShowScanner(!showScanner)}
+              >
+                {showScanner ? "Close Scanner" : "📷 Scan QR"}
+              </button>
+            </div>
+
+            {showScanner && <div id="reader" />}
+
+            {trackError && (
+              <div className="alert alert-error">⚠ {trackError}</div>
+            )}
+
+            {products.length > 0 && (
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Hash</th>
+                      <th>Product Name</th>
+                      <th>Location</th>
+                      <th>Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {products.map((item, index) => (
+                      <tr key={index}>
+                        <td>{item.hash}</td>
+                        <td>{item.name}</td>
+                        <td>{item.address}</td>
+                        <td>{item.time}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {!trackLoading && !trackError && products.length === 0 && hashInput === "" && (
+              <div className="empty-state">
+                Enter a product hash above to view its blockchain history.
+              </div>
+            )}
+          </div>
+
         </div>
-
       </div>
+
+      <footer className="footer">
+        Blockchain Product Tracker © 2026 — Powered by Ethereum
+      </footer>
     </div>
-    <footer className="footer">
-      Blockchain Product Tracker © 2026
-    </footer>
-  </div>
-);
+  );
 }
+
 export default App;
+
